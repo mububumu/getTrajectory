@@ -3,13 +3,17 @@
 import bluetooth
 from math import *
 from numpy import *
+import time
+
 
 # x/y/z方向上独立运算
-# 以大地坐标系为参照系（左手系）
+# 以大地坐标系为参照系（左手系？）
 # 将加速度转换至大地坐标系下
 # poseData[0] : 绕 x 轴逆时针旋转角度
 # poseData[1] : 绕 y 轴逆时针旋转角度
 # poseData[2] : 绕 z 轴逆时针旋转角度
+
+###################### 变量声明 #######################
 
 # 重力加速度 (m/s^2)
 GravAccel = -9.8
@@ -23,17 +27,20 @@ RMat = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
 # 加速度计数据
 accelData = [0, 0, 0]
 
-# 运动加速度（滤除重力加速度后）
-ax = 0
-ay = 0
-az = 0
+# 之前运动加速度
+lastAccel = [0, 0, 0]
+# 当前运动加速度（滤除重力加速度后）
+currAccel = [0, 0, 0]
 
-
+# 之前位置
+lastPos = [0, 0, 0]
 # 当前位置
 currPos = [0, 0, 0]
 # 轨迹
 trajectory = []
 
+# 之前速度
+lastSpeed = [0, 0, 0]
 # 当前速度
 currSpeed = [0, 0, 0]
 
@@ -46,6 +53,12 @@ currRecvAccelMoment = 0
 
 # 时间片段
 timeSlice = 0
+
+# 等待初始化
+waitForInit = 0
+
+###################### 变量声明 #######################
+
 
 # 姿态角 -> 旋转矩阵
 def poseToRotationMat():
@@ -69,12 +82,14 @@ def poseToRotationMat():
     RMat[2][2] = cy * cx
 
 # 计算当前运动速度
-def calCurrSpeed():
-    pass
+def calCurrSpeed(delt):
+    for i in range(3):
+        currSpeed[i] = lastSpeed[i] + (currAccel[i] + lastAccel[i]) / 2 * delt
 
 # 计算当前位置
-def calCurrPos():
-    pass
+def calCurrPos(delt):
+    for i in range(3):
+        currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * pow(delt, 2)
 
 # 重力加速度分量滤除
 # 可通过静止状态时为0检验
@@ -85,11 +100,11 @@ def GravAccelFiltering():
     filY = RMat[1][2] * GravAccel
     filZ = RMat[2][2] * GravAccel
 
-    ax = accelData[0] - filX
-    ay = accelData[1] - filY
-    az = accelData[2] - filZ
+    currAccel[0] = accelData[0] - filX
+    currAccel[1] = accelData[1] - filY
+    currAccel[2] = accelData[2] - filZ
 
-    print(ax, ay, az)
+    print(currAccel[0], currAccel[1], currAccel[2])
 
 ################################ 蓝牙通讯 #####################################
 server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
@@ -108,6 +123,8 @@ client_sock, client_info = server_sock.accept()
 print("Accepted connection from", client_info)
 ############################### 蓝牙通讯 #####################################
 
+
+############################### work #####################################
 try:
     while True:
         data = client_sock.recv(1024)
@@ -132,14 +149,29 @@ try:
                 poseData[i] = poseData[i] / 180 * pi
             poseToRotationMat()
         elif cmdType == "AD":
+            currRecvAccelMoment = time.time()
             # 接收并转换
             accelData[0] = float(pData[1])
             accelData[1] = float(pData[2])
             accelData[2] = float(pData[3])
 
+            poseToRotationMat()
             GravAccelFiltering()
-            # calCurrSpeed()
-            # calCurrPos()
+
+            if waitForInit < 10:
+                waitForInit += 1
+            else:
+                timeSlice = currRecvAccelMoment - lastRecvAccelMoment
+                calCurrSpeed(timeSlice)
+                calCurrPos(timeSlice)
+
+            # 状态更新
+            lastRecvAccelMoment = currRecvAccelMoment
+            lastAccel = currAccel
+            lastSpeed = currSpeed
+            lastPos = currPos
+            trajectory.append(currPos)
+
         else:
             continue
 
@@ -147,7 +179,7 @@ try:
 
 except OSError:
     pass
-
+############################### work #####################################
 
 # 关闭蓝牙通讯
 client_sock.close()
