@@ -2,13 +2,17 @@
 
 import bluetooth
 from math import *
+import numpy.linalg
 from numpy import *
 import time
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 
 # x/y/z方向上独立运算
-# 以大地坐标系为参照系（左手系？）
-# 将加速度转换至大地坐标系下
+# 以大地坐标系为参照系
+# 假设加速度坐标系(A)及方位角坐标系(B)三轴两两相互平行
+# 将加速度、方位角转换至大地坐标系下
 # poseData[0] : 绕 x 轴逆时针旋转角度
 # poseData[1] : 绕 y 轴逆时针旋转角度
 # poseData[2] : 绕 z 轴逆时针旋转角度
@@ -16,13 +20,15 @@ import time
 ###################### 变量声明 #######################
 
 # 重力加速度 (m/s^2)
-GravAccel = -9.8
+Grav = 9.81
 
 # 姿态数据
 # (-180, 180)
 poseData = [0, 0, 0]
 # 旋转矩阵
-RMat = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+RMat = array([[1, 0, 0],
+              [0, 1, 0],
+              [0, 0, 1]])
 
 # 加速度计数据
 accelData = [0, 0, 0]
@@ -62,6 +68,8 @@ waitForInit = 0
 
 # 姿态角 -> 旋转矩阵
 def poseToRotationMat():
+    global RMat
+
     cz = cos(poseData[2])
     sz = sin(poseData[2])
     cy = cos(poseData[1])
@@ -69,42 +77,98 @@ def poseToRotationMat():
     cx = cos(poseData[0])
     sx = sin(poseData[0])
 
-    RMat[0][0] = cz * cy
-    RMat[0][1] = cz * sy * sx - sz * cx
-    RMat[0][2] = cz * sy * cx - sz * sx
+    # 基本旋转矩阵
+    XM = array([[1, 0, 0],
+                [0, cx, -sx],
+                [0, sx, cx]])
+    YM = array([[cy, 0, sy],
+                [0, 1, 0],
+                [-sy, 0, cy]])
+    ZM = array([[cz, -sz, 0],
+                [sz, cz, 0],
+                [0, 0, 1]])
 
-    RMat[1][0] = sz * cy
-    RMat[1][1] = sz * sy * sx + cz * cx
-    RMat[1][2] = sz * sy * cx + cz * sx
 
-    RMat[2][0] = -sy
-    RMat[2][1] = cy * sx
-    RMat[2][2] = cy * cx
+    RMat = matmul(matmul(YM, XM), ZM)
 
 # 计算当前运动速度
 def calCurrSpeed(delt):
+    global lastAccel
+    global currAccel
+    global lastSpeed
+    global currSpeed
+
     for i in range(3):
         currSpeed[i] = lastSpeed[i] + (currAccel[i] + lastAccel[i]) / 2 * delt
+    print("Current Speed: ", currSpeed[0], currSpeed[1], currSpeed[2])
 
 # 计算当前位置
 def calCurrPos(delt):
+    global lastAccel
+    global currAccel
+    global lastSpeed
+    global currSpeed
+    global lastPos
+    global currPos
+
     for i in range(3):
         currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * pow(delt, 2)
+    print("Current Position: ", currPos[0], currPos[1], currPos[2])
 
 # 重力加速度分量滤除
-# 可通过静止状态时为0检验
+# 可通过静止状态时为 0 检验
 # 是否可以在下位机完成
 # 接收的是融合后的姿态，应该重新求旋转矩阵
 def GravAccelFiltering():
-    filX = RMat[0][2] * GravAccel
-    filY = RMat[1][2] * GravAccel
-    filZ = RMat[2][2] * GravAccel
 
-    currAccel[0] = accelData[0] - filX
-    currAccel[1] = accelData[1] - filY
-    currAccel[2] = accelData[2] - filZ
+    for i in range(3):
+        currAccel[i] = accelData[i] - RMat[i][2] * Grav
+    print(numpy.linalg.norm(currAccel))
+    print("Current Acceleration: ", currAccel[0], currAccel[1], currAccel[2])
 
-    print(currAccel[0], currAccel[1], currAccel[2])
+# 输出控制
+outCtrl = 0
+
+# 轨迹点计数
+counter = 0
+
+# 刷新
+def restart():
+    global waitForInit
+    global lastRecvAccelMoment
+    global lastAccel
+    global lastSpeed
+    global lastPos
+    global trajectory
+
+    waitForInit = 0
+    lastRecvAccelMoment = 0
+    lastAccel = [0, 0, 0]
+    lastSpeed = [0, 0, 0]
+    lastPos = [0, 0, 0]
+    trajectory.clear()
+
+# 绘制轨迹
+def outTrajectory():
+    global trajectory
+
+    data = array(trajectory)
+
+    x = data[10:, 0]
+    y = data[10:, 1]
+    z = data[10:, 2]
+
+    # print(x)
+
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    ax.scatter(x, y, z)
+
+    ax.set_zlabel('Z', fontdict={'size': 15, 'color': 'red'})
+    ax.set_ylabel('Y', fontdict={'size': 15, 'color': 'red'})
+    ax.set_xlabel('X', fontdict={'size': 15, 'color': 'red'})
+    plt.show()
+
 
 ################################ 蓝牙通讯 #####################################
 server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
@@ -140,22 +204,19 @@ try:
         cmdType = pData[0]
         if cmdType == "PD":
             # 接收并转换
-            poseData[0] = float(pData[1])
-            poseData[1] = -float(pData[2])
-            poseData[2] = -float(pData[3])
-
-            # Deg -> Rad
             for i in range(3):
-                poseData[i] = poseData[i] / 180 * pi
+                poseData[i] = float(pData[i + 1])
+                # Deg -> Rad
+                poseData[i] = poseData[i] / 180.0 * pi
+
             poseToRotationMat()
+
         elif cmdType == "AD":
             currRecvAccelMoment = time.time()
             # 接收并转换
-            accelData[0] = float(pData[1])
-            accelData[1] = float(pData[2])
-            accelData[2] = float(pData[3])
-
-            poseToRotationMat()
+            for i in range(3):
+                accelData[i] = float(pData[i + 1])
+            accelData[0] = -accelData[0]
             GravAccelFiltering()
 
             if waitForInit < 10:
@@ -170,12 +231,20 @@ try:
             lastAccel = currAccel
             lastSpeed = currSpeed
             lastPos = currPos
-            trajectory.append(currPos)
+
+            trajectory.append([currPos[0], currPos[1], currPos[2]])
 
         else:
             continue
 
         print("GET : " + pData[0] + ' ' + pData[1] + ' ' + pData[2] + ' ' + pData[3])
+
+        if outCtrl >= 60:
+            outCtrl = 0
+            outTrajectory()
+            restart()
+        else:
+            outCtrl += 1
 
 except OSError:
     pass
