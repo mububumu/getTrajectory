@@ -30,7 +30,9 @@ RMat = array([[1, 0, 0],
               [0, 1, 0],
               [0, 0, 1]])
 
+
 # 加速度计数据
+# 在载体（手机）坐标系下的表示
 accelData = [0, 0, 0]
 
 # 之前运动加速度
@@ -79,52 +81,51 @@ def poseToRotationMat():
 
     # 基本旋转矩阵
     XM = array([[1, 0, 0],
-                [0, cx, -sx],
-                [0, sx, cx]])
+                [0, cx, sx],
+                [0, -sx, cx]])
     YM = array([[cy, 0, sy],
                 [0, 1, 0],
                 [-sy, 0, cy]])
-    ZM = array([[cz, -sz, 0],
-                [sz, cz, 0],
+    ZM = array([[cz, sz, 0],
+                [-sz, cz, 0],
                 [0, 0, 1]])
 
 
-    RMat = matmul(matmul(YM, XM), ZM)
+    RMat = matmul(matmul(ZM, XM), YM)
+
 
 # 计算当前运动速度
 def calCurrSpeed(delt):
-    global lastAccel
-    global currAccel
-    global lastSpeed
-    global currSpeed
-
     for i in range(3):
         currSpeed[i] = lastSpeed[i] + (currAccel[i] + lastAccel[i]) / 2 * delt
     print("Current Speed: ", currSpeed[0], currSpeed[1], currSpeed[2])
 
 # 计算当前位置
 def calCurrPos(delt):
-    global lastAccel
-    global currAccel
-    global lastSpeed
-    global currSpeed
-    global lastPos
-    global currPos
-
     for i in range(3):
-        currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * pow(delt, 2)
+        currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * delt
     print("Current Position: ", currPos[0], currPos[1], currPos[2])
 
-# 重力加速度分量滤除
+
 # 可通过静止状态时为 0 检验
 # 是否可以在下位机完成
 # 接收的是融合后的姿态，应该重新求旋转矩阵
-def GravAccelFiltering():
+def GravAccelTrans():
+    global currAccel
+    global accelData
 
+    accelVector = array(accelData).reshape(3, 1)
+
+    currAccelVec = matmul(RMat, accelVector)
     for i in range(3):
-        currAccel[i] = accelData[i] - RMat[i][2] * Grav
-    print(numpy.linalg.norm(currAccel))
+        currAccel[i] = currAccelVec[i][0]
+
+    # 重力加速度分量滤除
+    currAccel[2] -= Grav
+
+    print("Size of Acceleration:", numpy.linalg.norm(currAccel))
     print("Current Acceleration: ", currAccel[0], currAccel[1], currAccel[2])
+
 
 # 输出控制
 outCtrl = 0
@@ -135,17 +136,13 @@ counter = 0
 # 刷新
 def restart():
     global waitForInit
-    global lastRecvAccelMoment
-    global lastAccel
-    global lastSpeed
-    global lastPos
+    global currSpeed
+    global currPos
     global trajectory
 
     waitForInit = 0
-    lastRecvAccelMoment = 0
-    lastAccel = [0, 0, 0]
-    lastSpeed = [0, 0, 0]
-    lastPos = [0, 0, 0]
+    currSpeed = [0, 0, 0]
+    currPos = [0, 0, 0]
     trajectory.clear()
 
 # 绘制轨迹
@@ -216,13 +213,14 @@ try:
             # 接收并转换
             for i in range(3):
                 accelData[i] = float(pData[i + 1])
-            accelData[0] = -accelData[0]
-            GravAccelFiltering()
+            # accelData[0] = -accelData[0]
+            GravAccelTrans()
 
             if waitForInit < 10:
                 waitForInit += 1
             else:
                 timeSlice = currRecvAccelMoment - lastRecvAccelMoment
+                print("timeSlice: ", timeSlice)     # 100 ms
                 calCurrSpeed(timeSlice)
                 calCurrPos(timeSlice)
 
@@ -232,6 +230,7 @@ try:
             lastSpeed = currSpeed
             lastPos = currPos
 
+            # trajectory.append(currPos)
             trajectory.append([currPos[0], currPos[1], currPos[2]])
 
         else:
@@ -239,12 +238,14 @@ try:
 
         print("GET : " + pData[0] + ' ' + pData[1] + ' ' + pData[2] + ' ' + pData[3])
 
-        if outCtrl >= 60:
+        if outCtrl >= 400:
             outCtrl = 0
             outTrajectory()
             restart()
         else:
             outCtrl += 1
+
+        print('\n')
 
 except OSError:
     pass
