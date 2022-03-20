@@ -7,6 +7,8 @@ from numpy import *
 import time
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.font_manager as fm
+import json
 
 
 # x/y/z方向上独立运算
@@ -39,6 +41,15 @@ accelData = [0, 0, 0]
 lastAccel = [0, 0, 0]
 # 当前运动加速度（滤除重力加速度后）
 currAccel = [0, 0, 0]
+# 加速度曲线
+accelCurve = []
+
+# 之前速度
+lastSpeed = [0, 0, 0]
+# 当前速度
+currSpeed = [0, 0, 0]
+# 速度曲线
+speedCurve = []
 
 # 之前位置
 lastPos = [0, 0, 0]
@@ -47,10 +58,6 @@ currPos = [0, 0, 0]
 # 轨迹
 trajectory = []
 
-# 之前速度
-lastSpeed = [0, 0, 0]
-# 当前速度
-currSpeed = [0, 0, 0]
 
 # 时间控制
 
@@ -61,9 +68,20 @@ currRecvAccelMoment = 0
 
 # 时间片段
 timeSlice = 0
+# 时间累积
+timeSum = 0
 
 # 等待初始化
 waitForInit = 0
+
+# 输出控制
+outCtrl = 0
+
+# 轨迹点计数
+counter = 0
+
+# JSON文件存储序列
+JSONno = 1
 
 ###################### 变量声明 #######################
 
@@ -126,24 +144,19 @@ def GravAccelTrans():
     print("Size of Acceleration:", numpy.linalg.norm(currAccel))
     print("Current Acceleration: ", currAccel[0], currAccel[1], currAccel[2])
 
-
-# 输出控制
-outCtrl = 0
-
-# 轨迹点计数
-counter = 0
-
 # 刷新
 def restart():
     global waitForInit
     global currSpeed
     global currPos
     global trajectory
+    global timeSum
 
     waitForInit = 0
     currSpeed = [0, 0, 0]
     currPos = [0, 0, 0]
     trajectory.clear()
+    timeSum = 0
 
 # 绘制轨迹
 def outTrajectory():
@@ -166,6 +179,42 @@ def outTrajectory():
     ax.set_xlabel('X', fontdict={'size': 15, 'color': 'red'})
     plt.show()
 
+# 绘制加速度以及速度曲线
+def outAccelandSpeed():
+    global accelCurve
+    global speedCurve
+
+    plt.cla()
+    plt.clf()
+
+    d1 = array(accelCurve)
+    d2 = array(speedCurve)
+
+    t = d1[10:, 0]
+    a = d1[10:, 1]
+    v = d2[10:, 1]
+
+    a = plt.plot(t, a, color='red', linewidth=2.0, linestyle='--')
+    v = plt.plot(t, v, color='blue', linewidth=3.0, linestyle='-.')
+
+    # my_font = fm.FontProperties(fname="/usr/share/fonts/wqy-microhei/wqy-microhei.ttc")
+    # plt.legend(handles=[a, v], labels=["acceleration", "speed"],prop=my_font)
+
+    plt.show()
+
+def saveAsJSON():
+
+    global trajectory
+    global JSONno
+
+    trajJSON = json.dumps(trajectory[10:])
+    print(trajJSON)
+
+    with open("C:\\Users\\DELL\\Desktop\\DataSource\\" + str(JSONno) + ".json", "w") as f:
+        json.dump(trajJSON, f)
+        print("加载入文件完成...")
+
+    JSONno += 1
 
 ################################ 蓝牙通讯 #####################################
 server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
@@ -225,12 +274,17 @@ try:
                 calCurrPos(timeSlice)
 
             # 状态更新
+            timeSum += timeSlice
             lastRecvAccelMoment = currRecvAccelMoment
             lastAccel = currAccel
             lastSpeed = currSpeed
             lastPos = currPos
 
             # trajectory.append(currPos)
+
+            # 状态存储
+            accelCurve.append([timeSum, numpy.linalg.norm(currAccel)])
+            speedCurve.append([timeSum, numpy.linalg.norm(currSpeed)])
             trajectory.append([currPos[0], currPos[1], currPos[2]])
 
         else:
@@ -238,9 +292,15 @@ try:
 
         print("GET : " + pData[0] + ' ' + pData[1] + ' ' + pData[2] + ' ' + pData[3])
 
-        if outCtrl >= 400:
+        if outCtrl >= 250:
             outCtrl = 0
             outTrajectory()
+            # outAccelandSpeed()
+
+            op = input()
+            if op == "y":
+                saveAsJSON()
+
             restart()
         else:
             outCtrl += 1
