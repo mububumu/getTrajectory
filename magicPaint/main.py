@@ -121,7 +121,7 @@ def calCurrSpeed(delt):
 # 计算当前位置
 def calCurrPos(delt):
     for i in range(3):
-        currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * delt
+        currPos[i] = lastPos[i] + lastSpeed[i] * delt + (currAccel[i] + lastAccel[i]) / 4 * delt * delt
     print("Current Position: ", currPos[0], currPos[1], currPos[2])
 
 
@@ -292,7 +292,7 @@ try:
 
         print("GET : " + pData[0] + ' ' + pData[1] + ' ' + pData[2] + ' ' + pData[3])
 
-        if outCtrl >= 250:
+        if outCtrl >= 50:
             outCtrl = 0
             outTrajectory()
             # outAccelandSpeed()
